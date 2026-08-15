@@ -1,5 +1,14 @@
 streamlit>=1.37
 groq>=0.11.0
+ 
+# Torch CPU-only : évite le build CUDA/GPU par défaut de PyPI (qui embarque
+# triton + les paquets nvidia-cuda-*, beaucoup trop lourd en RAM pour le
+# tier gratuit de Streamlit Community Cloud et cause un crash silencieux
+# au démarrage). "+cpu" est prioritaire car PEP 440 considère une version
+# avec segment local (+cpu) comme "plus récente" que la même version sans.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+ 
 sentence-transformers>=3.0.1
 faiss-cpu>=1.8.0
 pypdf>=4.3.1
