@@ -22,11 +22,22 @@ du vrai modèle sentence-transformers.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Protocol, Sequence, Tuple
 
 import numpy as np
+
+# Désactive le protocole de téléchargement accéléré "Xet" de huggingface_hub.
+# Sur certains environnements cloud (dont Streamlit Community Cloud), Xet
+# reste bloqué plusieurs minutes sans erreur ni log lors du premier
+# téléchargement du modèle d'embeddings, ce qui déclenche l'échec du
+# health-check de la plateforme et fait planter l'application. Le
+# téléchargement HTTP classique, plus lent mais fiable, est utilisé à la
+# place. Doit être défini avant tout import de sentence-transformers /
+# huggingface_hub, d'où sa position ici (import paresseux plus bas).
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 DEFAULT_CHUNK_SIZE = 800
