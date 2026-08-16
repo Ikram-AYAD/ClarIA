@@ -156,7 +156,16 @@ def index_uploaded_files(uploaded_files, groq_client) -> None:
         )
 
         progress.progress(i / total, text=f"Calcul des embeddings pour {doc_name}...")
-        index.add_chunks(chunks)
+        try:
+            index.add_chunks(chunks)
+        except rag_core.EmbeddingModelUnavailable as exc:
+            st.error(
+                f"{exc} Le service d'hébergement a peut-être une connexion "
+                "lente vers Hugging Face en ce moment. Réessaie dans une "
+                "minute ; si le problème persiste, redémarre l'app depuis "
+                "'Manage app' sur Streamlit Cloud."
+            )
+            continue
         st.session_state.indexed_docs.append(doc_name)
 
         if groq_client is not None:
