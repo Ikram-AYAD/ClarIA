@@ -49,7 +49,18 @@ export function chunkText(
         if (overlapLen >= overlap) break;
       }
 
-      current = overlapSentences;
+      // Garde-fou anti-boucle infinie : si les phrases de `current` sont
+      // toutes très courtes, la fenêtre de chevauchement ci-dessus peut
+      // finir par reprendre `current` en entier (aucune réduction), ce qui
+      // rejouerait indéfiniment la même itération sans jamais avancer `i`.
+      // On force alors une progression stricte en retirant au moins la
+      // phrase la plus ancienne.
+      const nextCurrent =
+        overlapSentences.length >= current.length
+          ? current.slice(1)
+          : overlapSentences;
+
+      current = nextCurrent;
       currentLen = current.reduce((acc, s) => acc + s.length + 1, 0);
       continue;
     }
