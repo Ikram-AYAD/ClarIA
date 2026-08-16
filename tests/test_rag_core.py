@@ -5,8 +5,10 @@ Tests unitaires pour rag_core.py : découpage en chunks, recherche
 vectorielle et construction du prompt.
 
 Un encodeur factice (FakeEncoder) est injecté dans VectorIndex afin de ne
-pas dependre du telechargement du vrai modele sentence-transformers pendant
-les tests (rapide, déterministe, fonctionne hors ligne).
+pas dépendre d'un appel réseau à l'API d'inférence Hugging Face pendant les
+tests (rapide, déterministe, fonctionne hors ligne). HFInferenceEncoder
+(l'encodeur utilisé en production) est testé séparément avec un faux client
+HTTP, voir plus bas dans ce fichier.
 """
 
 import sys
@@ -355,3 +357,92 @@ def test_remove_all_documents_empties_index():
     index.remove_document("animaux.txt")
     assert index.is_empty()
     assert index.search("quoi que ce soit") == []
+
+
+# --------------------------------------------------------------------------
+# HFInferenceEncoder (embeddings via l'API d'inférence Hugging Face)
+# --------------------------------------------------------------------------
+
+class _FakeInferenceClient:
+    """Remplace huggingface_hub.InferenceClient : aucun appel réseau."""
+
+    def __init__(self, responses=None, fail_times=0, **kwargs):
+        self.calls = []
+        self._responses = responses
+        self._fail_times = fail_times
+
+    def feature_extraction(self, payload):
+        self.calls.append(payload)
+        if self._fail_times > 0:
+            self._fail_times -= 1
+            raise RuntimeError("service momentanément indisponible")
+        if self._responses is not None:
+            return self._responses.pop(0)
+        # Réponse par défaut : un vecteur déjà poolé par texte.
+        if isinstance(payload, list):
+            return [[0.1, 0.2, 0.3] for _ in payload]
+        return [0.1, 0.2, 0.3]
+
+
+def _make_hf_encoder(monkeypatch, fake_client):
+    import huggingface_hub
+
+    monkeypatch.setattr(
+        huggingface_hub, "InferenceClient", lambda **kwargs: fake_client
+    )
+    return rag_core.HFInferenceEncoder("all-MiniLM-L6-v2", token="fake-token")
+
+
+def test_hf_inference_encoder_batch_call_returns_matrix(monkeypatch):
+    fake_client = _FakeInferenceClient()
+    encoder = _make_hf_encoder(monkeypatch, fake_client)
+
+    vectors = encoder.encode(["bonjour", "au revoir"])
+
+    assert vectors.shape == (2, 3)
+    assert fake_client.calls == [["bonjour", "au revoir"]]
+
+
+def test_hf_inference_encoder_pools_token_level_embeddings(monkeypatch):
+    # Simule une réponse "brute" [batch, tokens, dim] non poolée.
+    fake_client = _FakeInferenceClient(responses=[[[[1.0, 1.0], [3.0, 3.0]]]])
+    encoder = _make_hf_encoder(monkeypatch, fake_client)
+
+    vectors = encoder.encode(["un seul texte"])
+
+    assert vectors.shape == (1, 2)
+    assert vectors[0].tolist() == [2.0, 2.0]  # moyenne de [1,1] et [3,3]
+
+
+def test_hf_inference_encoder_falls_back_to_per_text_calls(monkeypatch):
+    monkeypatch.setattr(rag_core.time, "sleep", lambda _seconds: None)
+    # Le premier appel (batch) échoue à chaque tentative -> repli par texte.
+    fake_client = _FakeInferenceClient(fail_times=3)
+    encoder = _make_hf_encoder(monkeypatch, fake_client)
+
+    vectors = encoder.encode(["a", "b"])
+
+    assert vectors.shape == (2, 3)
+    # 3 tentatives batch ratées, puis 1 appel par texte (2 appels réussis).
+    assert fake_client.calls[-2:] == ["a", "b"]
+
+
+def test_hf_inference_encoder_empty_input_returns_empty_matrix(monkeypatch):
+    fake_client = _FakeInferenceClient()
+    encoder = _make_hf_encoder(monkeypatch, fake_client)
+
+    vectors = encoder.encode([])
+
+    assert vectors.shape == (0, rag_core.EMBEDDING_DIM)
+
+
+def test_vector_index_wraps_encoder_errors_in_embedding_model_unavailable():
+    class AlwaysFailsEncoder:
+        def encode(self, texts, **kwargs):
+            raise RuntimeError("HF API indisponible")
+
+    index = rag_core.VectorIndex(encoder=AlwaysFailsEncoder())
+    chunk = rag_core.Chunk(id=0, text="texte", doc_name="doc.txt", page=None)
+
+    with pytest.raises(rag_core.EmbeddingModelUnavailable):
+        index.add_chunks([chunk])

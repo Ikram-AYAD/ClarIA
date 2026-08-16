@@ -16,13 +16,16 @@ Cœur du pipeline RAG (Retrieval-Augmented Generation) de ClarIA :
 Ce module est volontairement indépendant de Streamlit afin de pouvoir être
 testé unitairement (voir tests/test_rag_core.py) et réutilisé dans d'autres
 contextes (CLI, API, etc.). L'encodeur d'embeddings est injectable : les
-tests peuvent fournir un faux encodeur pour ne pas dépendre du téléchargement
-du vrai modèle sentence-transformers.
+tests peuvent fournir un faux encodeur pour ne pas dépendre d'un appel
+réseau à l'API d'inférence Hugging Face (utilisée par défaut en production,
+voir HFInferenceEncoder).
 """
 
 from __future__ import annotations
 
+import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Protocol, Sequence, Tuple
 
@@ -157,15 +160,87 @@ def chunk_document(
 # 2. Index vectoriel (embeddings + FAISS) + recherche hybride (BM25)
 # --------------------------------------------------------------------------
 
+class EmbeddingModelUnavailable(RuntimeError):
+    """Levée quand le modèle d'embeddings n'a pas pu être chargé/téléchargé
+    (timeout réseau, service Hugging Face indisponible, etc.). Permet à
+    l'interface (Streamlit) d'afficher un message clair plutôt que de
+    rester bloquée silencieusement."""
+
+
 class Encoder(Protocol):
     """Interface minimale attendue pour un encodeur d'embeddings.
 
-    `SentenceTransformer` la respecte déjà. Les tests peuvent injecter un
-    faux encodeur qui respecte cette même interface.
+    Les tests peuvent injecter un faux encodeur qui respecte cette même
+    interface, sans dépendre du réseau.
     """
 
     def encode(self, texts: Sequence[str], **kwargs) -> np.ndarray:
         ...
+
+
+EMBEDDING_DIM = 384  # dimension des vecteurs pour all-MiniLM-L6-v2
+
+
+class HFInferenceEncoder:
+    """Encodeur d'embeddings basé sur l'API d'inférence hébergée (gratuite,
+    limitée en débit) de Hugging Face, plutôt que sur un modèle chargé
+    localement via torch/sentence-transformers.
+
+    Ce choix évite d'installer ~700 Mo de dépendances ML (torch,
+    transformers, scipy, scikit-learn) dans l'application, dont la RAM au
+    démarrage dépassait la limite du tier gratuit de Streamlit Community
+    Cloud. Le modèle utilisé (all-MiniLM-L6-v2) reste identique : seule sa
+    localisation d'exécution change.
+    """
+
+    def __init__(self, model_name: str, token: Optional[str] = None, timeout: float = 30.0):
+        from huggingface_hub import InferenceClient
+
+        self._model_name = model_name
+        # provider="hf-inference" force l'utilisation de l'infrastructure
+        # d'inférence Hugging Face elle-même (qui héberge ce modèle), plutôt
+        # qu'un routage automatique vers un fournisseur tiers qui pourrait
+        # ne pas le proposer.
+        self._client = InferenceClient(
+            model=model_name, token=token, timeout=timeout, provider="hf-inference"
+        )
+
+    def _call(self, payload, max_retries: int = 3):
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                return self._client.feature_extraction(payload)
+            except Exception as exc:  # noqa: BLE001 - on réessaie, on ne masque rien au final
+                last_exc = exc
+                # Sur l'infrastructure gratuite de Hugging Face, un modèle
+                # inactif depuis un moment doit parfois être "réveillé" : le
+                # premier appel peut échouer/timeout le temps qu'il charge.
+                if attempt < max_retries - 1:
+                    time.sleep(min(5 * (attempt + 1), 15))
+        raise last_exc  # type: ignore[misc]
+
+    def encode(self, texts: Sequence[str], **_kwargs) -> np.ndarray:
+        texts = [str(t) for t in texts]
+        if not texts:
+            return np.zeros((0, EMBEDDING_DIM), dtype="float32")
+
+        try:
+            result = self._call(texts)
+            vectors = np.asarray(result, dtype="float32")
+            if vectors.ndim == 3:  # embeddings par token (non poolés) : on moyenne
+                vectors = vectors.mean(axis=1)
+            if vectors.ndim == 2 and vectors.shape[0] == len(texts):
+                return vectors
+        except Exception:
+            pass  # repli sur un appel par texte ci-dessous
+
+        vectors = []
+        for text in texts:
+            single = np.asarray(self._call(text), dtype="float32")
+            if single.ndim == 2:
+                single = single.mean(axis=0)
+            vectors.append(single)
+        return np.vstack(vectors)
 
 
 class VectorIndex:
@@ -189,18 +264,26 @@ class VectorIndex:
 
     @property
     def encoder(self) -> Encoder:
-        """Charge paresseusement sentence-transformers si aucun encodeur
-        n'a été injecté (évite le téléchargement du modèle dans les tests)."""
+        """Instancie paresseusement l'encodeur (API d'inférence Hugging
+        Face) si aucun encodeur n'a été injecté. Les tests injectent un
+        faux encodeur pour rester hors-ligne."""
         if self._encoder is None:
-            from sentence_transformers import SentenceTransformer
-
-            self._encoder = SentenceTransformer(self._model_name)
+            token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+            self._encoder = HFInferenceEncoder(self._model_name, token=token)
         return self._encoder
 
     def _embed(self, texts: Sequence[str]) -> np.ndarray:
-        vectors = self.encoder.encode(
-            list(texts), convert_to_numpy=True, show_progress_bar=False
-        )
+        try:
+            vectors = self.encoder.encode(
+                list(texts), convert_to_numpy=True, show_progress_bar=False
+            )
+        except Exception as exc:  # noqa: BLE001 - on veut tout intercepter ici
+            raise EmbeddingModelUnavailable(
+                f"Impossible de calculer les embeddings via le modèle "
+                f"'{self._model_name}' (API Hugging Face indisponible, "
+                "clé HF_TOKEN manquante/invalide, ou limite de débit "
+                "atteinte)."
+            ) from exc
         vectors = np.asarray(vectors, dtype="float32")
         if vectors.ndim == 1:
             vectors = vectors.reshape(1, -1)

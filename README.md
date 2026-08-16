@@ -19,8 +19,10 @@ jamais inventer.
   pas disponible sur la machine.
 - Découpage en chunks avec chevauchement, toujours aligné sur les fins de
   phrase (jamais de coupe au milieu d'une phrase).
-- Embeddings locaux et gratuits (`sentence-transformers`, modèle
-  `all-MiniLM-L6-v2`) : aucune clé API requise pour l'indexation.
+- Embeddings gratuits via l'**API d'inférence Hugging Face** (modèle
+  `all-MiniLM-L6-v2`) : pas de modèle lourd (torch) à installer/charger en
+  mémoire, ce qui garde l'application légère sur un hébergement gratuit.
+  Nécessite une clé `HF_TOKEN` gratuite (voir Installation).
 - **Recherche hybride** : similarité cosinus (FAISS `IndexFlatIP`) combinée
   à une recherche par mots-clés (BM25), pour retrouver aussi bien le sens
   général d'une question que les termes exacts (noms propres, chiffres,
@@ -122,7 +124,8 @@ Si Tesseract n'est pas installé, ClarIA continue de fonctionner
 normalement pour les PDF avec une couche de texte (la grande majorité) ;
 seul l'OCR des PDF scannés sera silencieusement indisponible.
 
-Copie `.env.example` en `.env` et renseigne ta clé API Groq (gratuite) :
+Copie `.env.example` en `.env` et renseigne tes deux clés API (toutes deux
+gratuites) :
 
 ```bash
 cp .env.example .env
@@ -130,9 +133,17 @@ cp .env.example .env
 
 ```
 GROQ_API_KEY=gsk_votre_cle_api_ici
+HF_TOKEN=hf_votre_token_ici
 ```
 
-Obtiens une clé gratuite sur [console.groq.com/keys](https://console.groq.com/keys).
+- `GROQ_API_KEY` : obtiens une clé gratuite sur
+  [console.groq.com/keys](https://console.groq.com/keys) (génération des
+  réponses).
+- `HF_TOKEN` : obtiens un token gratuit sur
+  [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained)
+  — choisis un token **fine-grained** avec la permission **"Inference
+  Providers"** cochée (utilisé pour calculer les embeddings des documents
+  via l'API, sans rien installer de lourd en local).
 
 ## Développer avec Visual Studio Code
 
@@ -200,7 +211,9 @@ pytest
 Les tests couvrent : le découpage en chunks (respect des fins de phrase,
 chevauchement), la recherche hybride FAISS + BM25 (modes semantique /
 mots-clés / hybride, avec un encodeur factice injecté pour ne pas dépendre
-du téléchargement du vrai modèle sentence-transformers), la suppression
+d'un appel réseau à l'API Hugging Face), l'encodeur d'embeddings basé sur
+l'API d'inférence Hugging Face (`HFInferenceEncoder`, avec un faux client
+HTTP), la suppression
 d'un document de l'index, l'extraction PDF/DOCX/TXT et l'OCR (sur des
 fichiers générés à la volée, y compris un PDF scanné synthétique), la
 validité du PDF exporté, la sauvegarde/chargement/suppression de
@@ -215,10 +228,12 @@ construction du prompt envoyé au modèle.
    compte GitHub, puis clique sur **New app**.
 3. Sélectionne le dépôt, la branche, et indique `app.py` comme fichier
    principal.
-4. Dans **Advanced settings → Secrets**, ajoute ta clé Groq au format TOML :
+4. Dans **Advanced settings → Secrets**, ajoute tes deux clés au format
+   TOML :
 
    ```toml
    GROQ_API_KEY = "gsk_votre_cle_api_ici"
+   HF_TOKEN = "hf_votre_token_ici"
    ```
 
 5. Clique sur **Deploy**.
@@ -227,13 +242,20 @@ Le fichier `requirements.txt` est pris en charge nativement par Streamlit
 Community Cloud. Le fichier `packages.txt` (déjà inclus) installe
 automatiquement `tesseract-ocr` et `tesseract-ocr-fra` au niveau système,
 ce qui active l'OCR des PDF scannés sans configuration supplémentaire.
-L'application lit automatiquement la clé Groq via
-`st.secrets["GROQ_API_KEY"]` (voir `get_groq_api_key()` dans `app.py`),
-sans qu'aucun fichier `.env` ne soit nécessaire en production.
+L'application lit automatiquement les deux clés via `st.secrets` (voir
+`get_groq_api_key()` et `_sync_hf_token_to_environ()` dans `app.py`), sans
+qu'aucun fichier `.env` ne soit nécessaire en production.
 
-Le premier chargement peut prendre une minute de plus le temps que
-`sentence-transformers` télécharge le modèle `all-MiniLM-L6-v2` (~90 Mo) ;
-il est ensuite mis en cache pour les sessions suivantes.
+**Pourquoi `HF_TOKEN` est nécessaire** : ClarIA calcule les embeddings des
+documents via l'API d'inférence gratuite de Hugging Face plutôt qu'en
+chargeant un modèle localement (torch + sentence-transformers). Ce choix
+évite d'installer/charger ~700 Mo de dépendances ML en mémoire, ce qui
+dépassait la RAM disponible sur le tier gratuit de Streamlit Community
+Cloud (l'application plantait ou restait bloquée au démarrage). Le modèle
+utilisé (`all-MiniLM-L6-v2`) est identique, seule son exécution se fait à
+distance. Crée un token gratuit sur
+[huggingface.co/settings/tokens](https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained)
+(type **fine-grained**, permission **"Inference Providers"** cochée).
 
 ## Notes de conception
 
@@ -274,7 +296,10 @@ il est ensuite mis en cache pour les sessions suivantes.
   du web.
 - **Modularité** : `rag_core.py` accepte un encodeur d'embeddings injecté
   (`VectorIndex(encoder=...)`), ce qui permet de tester le pipeline sans
-  dépendre du téléchargement du vrai modèle ni d'un accès réseau.
+  dépendre d'un accès réseau. `HFInferenceEncoder` (l'encodeur par défaut)
+  respecte le même protocole minimal (`encode(texts) -> np.ndarray`) et
+  pourrait être remplacé par un autre fournisseur d'embeddings sans changer
+  le reste du pipeline.
 
 ## Limites connues
 
@@ -292,9 +317,16 @@ il est ensuite mis en cache pour les sessions suivantes.
 - La recherche web bonus dépend de la disponibilité du service DuckDuckGo
   et échoue silencieusement (retour à une liste vide) si le réseau ou la
   dépendance ne sont pas disponibles.
-- Le code n'a pas été testé contre le vrai modèle sentence-transformers ni
-  contre de vrais appels a l'API Groq dans l'environnement de
-  developpement (contraintes de ressources) ; seule la logique pure a ete
-  testee unitairement (voir section Tests). Un test en conditions reelles
-  (cle API + modele reellement telecharge) est recommande avant un usage
-  en production.
+- Les embeddings dépendent de la disponibilité de l'API d'inférence
+  Hugging Face (gratuite, avec limite de débit) : en cas de pic de charge
+  ou de token invalide/manquant, l'indexation échoue avec un message clair
+  plutôt que de rester bloquée (voir `EmbeddingModelUnavailable` dans
+  `rag_core.py`). Sur l'infrastructure gratuite, un modèle inactif depuis
+  un moment peut nécessiter quelques secondes de "réveil" au premier appel
+  (géré automatiquement par un réessai avec pause).
+- Le code n'a pas été testé contre de vrais appels aux API Groq et
+  Hugging Face dans l'environnement de développement (contraintes réseau
+  du sandbox) ; la logique pure et les appels HTTP ont été testés
+  unitairement avec des doubles de test (voir section Tests). Un test en
+  conditions réelles (clés API valides) est recommandé avant un usage en
+  production.

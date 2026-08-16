@@ -76,6 +76,21 @@ def get_groq_api_key() -> str | None:
     )
 
 
+def _sync_hf_token_to_environ() -> None:
+    """Rend le token Hugging Face (embeddings) disponible dans
+    `os.environ`, que la clé vienne d'un fichier .env local ou des Secrets
+    Streamlit Cloud (ces derniers ne sont pas injectés dans os.environ
+    automatiquement, contrairement à .env)."""
+    if os.environ.get("HF_TOKEN"):
+        return
+    try:
+        secret_token = st.secrets.get("HF_TOKEN")  # type: ignore[union-attr]
+    except Exception:
+        secret_token = None
+    if secret_token:
+        os.environ["HF_TOKEN"] = secret_token
+
+
 def init_session_state() -> None:
     defaults = {
         "vector_index": rag_core.VectorIndex(),
@@ -156,7 +171,16 @@ def index_uploaded_files(uploaded_files, groq_client) -> None:
         )
 
         progress.progress(i / total, text=f"Calcul des embeddings pour {doc_name}...")
-        index.add_chunks(chunks)
+        try:
+            index.add_chunks(chunks)
+        except rag_core.EmbeddingModelUnavailable as exc:
+            st.error(
+                f"{exc} Le service d'hébergement a peut-être une connexion "
+                "lente vers Hugging Face en ce moment. Réessaie dans une "
+                "minute ; si le problème persiste, redémarre l'app depuis "
+                "'Manage app' sur Streamlit Cloud."
+            )
+            continue
         st.session_state.indexed_docs.append(doc_name)
 
         if groq_client is not None:
@@ -396,6 +420,24 @@ def render_sidebar() -> None:
                     "Tu peux aussi la définir via GROQ_API_KEY (.env ou secrets Streamlit)."
                 ),
             )
+
+        st.markdown(ui_theme.section_title_html("🔑", "Token Hugging Face"), unsafe_allow_html=True)
+        if os.environ.get("HF_TOKEN"):
+            st.success("Token détecté.", icon="✅")
+        else:
+            hf_token_input = st.text_input(
+                "Token Hugging Face",
+                type="password",
+                help=(
+                    "Nécessaire pour calculer les embeddings des documents (via "
+                    "l'API d'inférence Hugging Face). Crée un token fine-grained "
+                    "gratuit avec la permission 'Inference Providers' sur "
+                    "huggingface.co/settings/tokens. Tu peux aussi le définir via "
+                    "HF_TOKEN (.env ou secrets Streamlit)."
+                ),
+            )
+            if hf_token_input:
+                os.environ["HF_TOKEN"] = hf_token_input
 
         render_documents_section()
         render_search_settings()
@@ -646,6 +688,7 @@ def _page_icon():
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon=_page_icon(), layout="wide")
     st.markdown(ui_theme.CUSTOM_CSS, unsafe_allow_html=True)
+    _sync_hf_token_to_environ()
     init_session_state()
 
     st.markdown(
