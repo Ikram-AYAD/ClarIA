@@ -38,6 +38,13 @@ import numpy as np
 # place. Doit être défini avant tout import de sentence-transformers /
 # huggingface_hub, d'où sa position ici (import paresseux plus bas).
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# Bornes de temps strictes pour tout appel réseau vers Hugging Face : si la
+# connexion reste bloquée (fréquent sur certains réseaux cloud restreints),
+# une erreur claire est levée après quelques secondes au lieu de laisser
+# l'application entière rester muette pendant plusieurs minutes jusqu'à ce
+# que la plateforme d'hébergement la tue (health-check en échec).
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "20")
 
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 DEFAULT_CHUNK_SIZE = 800
@@ -168,6 +175,13 @@ def chunk_document(
 # 2. Index vectoriel (embeddings + FAISS) + recherche hybride (BM25)
 # --------------------------------------------------------------------------
 
+class EmbeddingModelUnavailable(RuntimeError):
+    """Levée quand le modèle d'embeddings n'a pas pu être chargé/téléchargé
+    (timeout réseau, service Hugging Face indisponible, etc.). Permet à
+    l'interface (Streamlit) d'afficher un message clair plutôt que de
+    rester bloquée silencieusement."""
+
+
 class Encoder(Protocol):
     """Interface minimale attendue pour un encodeur d'embeddings.
 
@@ -205,7 +219,13 @@ class VectorIndex:
         if self._encoder is None:
             from sentence_transformers import SentenceTransformer
 
-            self._encoder = SentenceTransformer(self._model_name)
+            try:
+                self._encoder = SentenceTransformer(self._model_name)
+            except Exception as exc:  # noqa: BLE001 - on veut tout intercepter ici
+                raise EmbeddingModelUnavailable(
+                    "Impossible de charger le modèle d'embeddings "
+                    f"'{self._model_name}' (réseau lent ou indisponible ?)."
+                ) from exc
         return self._encoder
 
     def _embed(self, texts: Sequence[str]) -> np.ndarray:
