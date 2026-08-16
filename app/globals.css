@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-ink-950 text-slate-200 antialiased;
+  background-image: theme("backgroundImage.grid-glow");
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(108, 123, 255, 0.35);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #262d4a;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333c60;
+  background-clip: padding-box;
+}
+
+.glass {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.045),
+    rgba(255, 255, 255, 0.02)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(18px);
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, #8b9dff 0%, #c084fc 55%, #5eead4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.4) 0%,
+    rgba(226, 232, 240, 0.9) 50%,
+    rgba(148, 163, 184, 0.4) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.5s linear infinite;
+}
+
+.prose-claria {
+  @apply text-[15px] leading-relaxed text-slate-200;
+}
+.prose-claria p {
+  @apply mb-3 last:mb-0;
+}
+.prose-claria strong {
+  @apply text-slate-50 font-semibold;
+}
+.prose-claria ul {
+  @apply list-disc pl-5 mb-3 space-y-1;
+}
+.prose-claria ol {
+  @apply list-decimal pl-5 mb-3 space-y-1;
+}
+.prose-claria code {
+  @apply bg-white/10 rounded px-1.5 py-0.5 text-[13px];
+}

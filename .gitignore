@@ -1,12 +1,16 @@
+node_modules
+.next
+out
 .env
-__pycache__/
-*.pyc
-.pytest_cache/
-.streamlit/secrets.toml
-.venv/
-venv/
-*.egg-info/
+.env.local
+*.log
 .DS_Store
-conversations/
+
+# Résidus de l'ancienne version Python/Streamlit (non trackés, conservés
+# localement mais hors du dépôt Next.js).
 /ClarIA/
-.claude/
+/.venv/
+/conversations/
+/.claude/
+/__pycache__/
+/.pytest_cache/

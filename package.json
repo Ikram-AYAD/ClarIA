@@ -1,0 +1,40 @@
+{
+  "name": "claria-web",
+  "version": "2.0.0",
+  "private": true,
+  "description": "ClarIA - assistant documentaire par IA (RAG), édition Next.js.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.3.19",
+    "groq-sdk": "^0.5.0",
+    "idb-keyval": "^6.2.1",
+    "lucide-react": "^0.427.0",
+    "mammoth": "^1.8.0",
+    "next": "14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "recharts": "^2.12.7",
+    "remark-gfm": "^4.0.0",
+    "unpdf": "^1.8.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/uuid": "^9.0.8",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.5",
+    "postcss": "^8.4.41",
+    "tailwindcss": "^3.4.9",
+    "typescript": "^5.5.4"
+  }
+}
