@@ -4,7 +4,10 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MODEL = "sentence-transformers/all-MiniLM-L6-v2";
-const HF_URL = `https://api-inference.huggingface.co/models/${MODEL}`;
+// api-inference.huggingface.co est déprécié depuis fin 2025 au profit du
+// nouveau routeur "Inference Providers". "hf-inference" force le routage
+// vers l'infrastructure d'inférence de Hugging Face elle-même.
+const HF_URL = `https://router.huggingface.co/hf-inference/models/${MODEL}/pipeline/feature-extraction`;
 const EMBEDDING_DIM = 384;
 
 function meanPoolIfNeeded(vectors: unknown): number[][] {
@@ -35,10 +38,7 @@ async function callHf(texts: string[], token: string, maxRetries = 3): Promise<n
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          inputs: texts,
-          options: { wait_for_model: true },
-        }),
+        body: JSON.stringify({ inputs: texts }),
       });
 
       if (!res.ok) {
@@ -51,7 +51,10 @@ async function callHf(texts: string[], token: string, maxRetries = 3): Promise<n
 
       return meanPoolIfNeeded(data);
     } catch (err) {
-      lastError = err;
+      lastError =
+        err instanceof Error && err.cause
+          ? new Error(`${err.message} (${String((err.cause as any)?.message ?? err.cause)})`)
+          : err;
       if (attempt < maxRetries - 1) {
         // Un modèle inactif depuis un moment doit parfois être "réveillé" :
         // le premier appel peut échouer/timeout le temps qu'il charge.
