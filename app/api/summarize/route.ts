@@ -4,7 +4,10 @@ import Groq from "groq-sdk";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const MODEL = "llama-3.1-8b-instant";
+// llama-3.1-8b-instant a été arrêté par Groq le 16/08/2026 (voir
+// console.groq.com/docs/deprecations). Remplacement recommandé par Groq :
+// openai/gpt-oss-20b.
+const MODEL = "openai/gpt-oss-20b";
 const MAX_CHARS = 12000;
 
 export async function POST(req: NextRequest) {
